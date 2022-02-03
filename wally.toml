@@ -1,0 +1,30 @@
+[package]
+name = "nightcycle/package"
+description = "A package!"
+version = "0.1.0"
+authors = ["CJ Oyer <coyer@nightcycle.us>"]
+realm = "shared"
+registry = "https://github.com/upliftgames/wally-index"
+exclude = ["Packages", ".vscode"]
+
+[dependencies]
+fusion = "elttob/fusion@^0.1.1-beta"
+attributer = "nightcycle/attributer@1.0.4"
+synthetic = "nightcycle/synthetic@2.0.0"
+promise = "evaera/promise@3.1.0"
+replicator = "nightcycle/replicator@1.0.1"
+sound = "nightcycle/sound@1.0.6"
+math2 = "nightcycle/math2@1.0.1"
+finite-state-machine = "nightcycle/fsm@1.0.2"
+raycast = "finobinos/raycast@2.0.3"
+signal = "quenty/signal@2.0.0-canary"
+maid = "quenty/maid@2.0.1-canary"
+import = "vocksel/import@2.1.0"
+tableutil = "finobinos/tableutil@1.1.6"
+enumerator = "howmanysmall/enumerator@2.2.3"
+stitch = "sayhisam1/stitch@0.12.0"
+input = "sleitnick/input@1.2.0"
+log = "sleitnick/log@0.1.0"
+symbol = "sleitnick/symbol@1.0.1"
+complex-regions = "vocksel/complex-regions@0.1.2"
+tag = "vocksel/tag@0.2.0"
