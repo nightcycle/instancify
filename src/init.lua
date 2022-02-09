@@ -5,10 +5,12 @@
 ]=]
 
 local collectionService = game:GetService("CollectionService")
+local runService = game:GetService("RunService")
 local replicatedStorage = game:GetService("ReplicatedStorage")
 
 local maidConstructor = require(script.Parent:WaitForChild("maid"))
 local rx = require(script.Parent:WaitForChild("rx"))
+local signalConstructor = require(script.Parent:WaitForChild("signal"))
 
 local module = {}
 local attributeTypes = {
@@ -39,7 +41,6 @@ local valueTypes = {
     Vector3 = "Vector3Value",
 }
 
-
 local metaTags = {
     __index = true,
     __newindex = true,
@@ -65,12 +66,22 @@ function isPrivate(key)
     return string.sub(key, 1, 1) == "_"
 end
 
-
-function handleValue(inst, onChangeFunction, propName, propValue, maid)
+function handleValue(inst, onChangeFunction, propName, propValue, maid, events, replicatedPlayer)
     local propType = typeof(propValue)
+    local replicator = inst:FindFirstChild("_Replicator") 
     if attributeTypes[propType] then
         inst:SetAttribute(propName, propValue)
         maid["_property"..propName] = inst:GetAttributeChangedSignal(propName):Connect(function()
+            if events["On"..propName] then
+                events:Fire(propValue)
+            end
+            if replicatedPlayer and replicator then
+                if runService:IsServer() then
+                    replicator:FireClient(replicatedPlayer, "Property", propName, propValue)
+                else
+                    replicator:FireServer("Property", propName, propValue)
+                end
+            end
             onChangeFunction(propName, inst:GetAttribute(propName))
         end)
     elseif valueTypes[propType] then
@@ -86,6 +97,16 @@ function handleValue(inst, onChangeFunction, propName, propValue, maid)
             collectionService:AddTag(propValueInst, "IsActuallyInstance")
         end
         maid["_attribute"..propName] = propValueInst:GetPropertyChangedSignal("Value"):Connect(function()
+            if events["On"..propName] then
+                events:Fire(propValue)
+            end
+            if replicatedPlayer and replicator then
+                if runService:IsServer() then
+                    replicator:FireClient(replicatedPlayer, "Property", propName, propValue)
+                else
+                    replicator:FireServer("Property", propName, propValue)
+                end
+            end
             onChangeFunction(propName, propValueInst.Value)
         end)
     end
@@ -98,7 +119,7 @@ function handleObject(inst, propName, propValue, maid)
         return currentInst
     elseif not currentInst then
         local newInst = module.new(propValue, propName, inst)
-        maid["_propObjet"..propName] = newInst
+        maid["_propObject_"..propName] = newInst
         return newInst
     end
 end
@@ -223,7 +244,8 @@ end
     @within Instancify
     @return nil
 ]=]
-function module.set(self: table, inst: Instance)
+function module.set(self: table, inst: Instance,
+    createFunctionEvents: boolean | nil, replicationPlayer: Player | nil)
     if collectionService:HasTag(inst, "Instancified") then return end
     -- logger:AtInfo():Log("Applying object to instance")
 
@@ -259,6 +281,13 @@ function module.set(self: table, inst: Instance)
         if not isPrivate(k) then
             if typeof(v) == "function" then
                 functions[k] = v
+                local eventName = "On"..k
+                if createFunctionEvents and self[eventName] == nil then
+                    local signal = signalConstructor.new()
+                    self[eventName] = signal
+                    maid["sig_"..eventName] = signal
+                    events[eventName] = signal
+                end
             elseif typeof(v) == "RBXScriptSignal" then
                 events[k] = v
             elseif typeof(v) == "table" then
@@ -272,12 +301,43 @@ function module.set(self: table, inst: Instance)
             end
         end
     end
+
+    local replicatedEvent
+    if replicationPlayer ~= nil then
+        if runService:IsServer() then
+            replicatedEvent = Instance.new("RemoteEvent", inst)
+            replicatedEvent.Name = "_Replicator"
+            self._maid:GiveTask(replicatedEvent.OnServerEvent:Connect(function(p, changeType, key, ...)
+                if p == replicationPlayer then
+                    if changeType == "Events" then
+                        inst:FindFirstChild(key):Fire(...)
+                    elseif changeType == "Properties" then
+                        properties[key] = ...
+                    elseif changeType == "Function" then
+                        inst:FindFirstChild(key):Invoke(...)
+                    end
+                end
+            end))
+        else
+            replicatedEvent = inst:WaitForChild("_Replicator")
+            self._maid:GiveTask(replicatedEvent.OnClientEvent:Connect(function(changeType, key, ...)
+                if changeType == "Events" then
+                    inst:FindFirstChild(key):Fire(...)
+                elseif changeType == "Properties" then
+                    properties[key] = ...
+                elseif changeType == "Function" then
+                    inst:FindFirstChild(key):Invoke(...)
+                end
+            end))
+        end
+    end
+
     for key, func in pairs(functions) do
         -- logger:AtInfo():Log("Building function "..key)
         local bindableFunction = inst:FindFirstChild(key) or Instance.new("BindableFunction", inst)
         bindableFunction.Name = key
         bindableFunction.OnInvoke = function(...)
-           return func(self, ...)
+            return func(self, ...)
         end
         bindableFunction.Parent = inst
         maid:GiveTask(bindableFunction)

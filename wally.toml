@@ -10,3 +10,4 @@ exclude = ["Packages", ".vscode"]
 [dependencies]
 rx = "nightcycle/rx@3.7.3"
 maid = "quenty/maid@2.0.1-canary"
+signal = "quenty/signal@^2.0.0-canary"
