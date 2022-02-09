@@ -229,11 +229,11 @@ end
     @within Instancify
     @return Instance
 ]=]
-function module.new(self, name, parent)
+function module.new(self, name, parent, createFunctionEvents: boolean | nil, replicationPlayer: Player | nil)
     -- logger:AtInfo():Log("Creating new object instance")
     local objInstance = Instance.new("Configuration", parent or workspace)
     objInstance.Name = name or "Object"
-    module.set(self, objInstance)
+    module.set(self, objInstance, createFunctionEvents, replicationPlayer)
     return objInstance
 end
 
