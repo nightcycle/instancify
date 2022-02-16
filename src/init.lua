@@ -114,7 +114,13 @@ end
 
 function handleObject(inst, propName, propValue, maid)
     local currentInst = propValue.Instance or inst:FindFirstChild(propName)
-    if currentInst and not collectionService:HasTag(currentInst, "Instancified") then
+    local isInstancified = false
+    if runService:IsClient() then
+        if collectionService:HasTag(inst, "ClientInstancified") then isInstancified = true end
+    else
+        if collectionService:HasTag(inst, "ServerInstancified") then isInstancified = true end
+    end
+    if currentInst and not isInstancified then
         module.set(propValue, currentInst)
         return currentInst
     elseif not currentInst then
@@ -124,25 +130,25 @@ function handleObject(inst, propName, propValue, maid)
     end
 end
 
-function updateProperties(inst, properties, maid)
+function updateProperties(inst, properties, maid, events, replicatedPlayer)
     for propName, propValue in pairs(properties) do
         local propType = typeof(propValue)
         if propType == "table" then
-            if propValue.get or propValue.Value then
+            if propValue.Value or propValue.get then
                 handleValue(inst, function(k, v)
-                    if propValue.set then
-                        propValue:set(v)
-                    elseif propValue.Value then
+                    if propValue.Value then
                         propValue.Value = v
+                    elseif propValue.get then
+                        propValue:set(v)
                     end
-                end, propName, propValue, maid)
-            else
-                handleObject(inst, propName, propValue, maid)
+                end, propName, propValue, maid, events, replicatedPlayer)
+            -- else
+                -- handleObject(inst, propName, propValue, maid)
             end
         else
             handleValue(inst, function(k, v)
                 properties[k] = v
-            end, propName, propValue, maid)
+            end, propName, propValue, maid, events, replicatedPlayer)
         end
     end
 end
@@ -153,14 +159,33 @@ end
     @within Instancify
     @return Object
 ]=]
+
+-- function setUpPropertySignals(tabl, updateFunc)
+--     local meta = getmetatable(tabl)
+--     local baseFunction = function(t, k, v)
+        
+--     end
+--     if meta.__newindex == nil then
+--         baseFunction = meta.__newindex
+--     end
+--     meta.__newindex = function()
+        
+--     end
+-- end
+
 function module.get(inst)
-    if not collectionService:HasTag(inst, "Instancified") then warn("No instance found at ", inst) end
+    if runService:IsClient() then
+        if not collectionService:HasTag(inst, "ClientInstancified") then warn("No instance found at ", inst) end
+    else
+        if not collectionService:HasTag(inst, "ServerInstancified") then warn("No instance found at ", inst) end
+    end
+
 
     local self = {}
     local maid = maidConstructor.new()
     self._maid = maid
 
-    local properties = {}
+    -- local properties = {}
     local valueBases = {}
     local attributes = {}
     for i, v in ipairs(inst:GetChildren()) do
@@ -189,7 +214,7 @@ function module.get(inst)
             end
         end
     end
-    local objectObserver = rx.from(self)
+    local objectObserver = rx.of(self)
     maid:GiveTask(objectObserver:Subscribe(function()
         for k, value in pairs(valueBases) do
             if value.ClassName ~= "ObjectValue" or collectionService:HasTag(value, "IsActuallyInstance") then
@@ -246,7 +271,12 @@ end
 ]=]
 function module.set(self: table, inst: Instance,
     createFunctionEvents: boolean | nil, replicationPlayer: Player | nil)
-    if collectionService:HasTag(inst, "Instancified") then return end
+    if runService:IsClient() then
+        if collectionService:HasTag(inst, "ClientInstancified") then warn("Already instancified") return end
+    else
+        if collectionService:HasTag(inst, "ServerInstancified") then warn("Already instancified") return end
+    end
+
     -- logger:AtInfo():Log("Applying object to instance")
 
 
@@ -274,7 +304,7 @@ function module.set(self: table, inst: Instance,
 
     local fullObject = assembleObject(self)
 
-    local properties = {}
+    -- local properties = {}
     local functions = {}
     local events = {}
     for k, v in pairs(fullObject) do
@@ -297,46 +327,68 @@ function module.set(self: table, inst: Instance,
                     events[k] = v
                 end
             else
-                properties[k] = v
+                self[k] = v
             end
         end
     end
 
     local replicatedEvent
+    -- print("Rep player", replicationPlayer)
     if replicationPlayer ~= nil then
+        -- print("Rep A")
         if runService:IsServer() then
+            -- print("Rep B")
             replicatedEvent = Instance.new("RemoteEvent", inst)
             replicatedEvent.Name = "_Replicator"
             self._maid:GiveTask(replicatedEvent.OnServerEvent:Connect(function(p, changeType, key, ...)
+                -- print("Server", p, changeType, key, ...)
                 if p == replicationPlayer then
+                    -- print("Key", key, self)
                     if changeType == "Events" then
                         inst:FindFirstChild(key):Fire(...)
                     elseif changeType == "Properties" then
-                        properties[key] = ...
+                        self[key] = ...
                     elseif changeType == "Function" then
-                        inst:FindFirstChild(key):Invoke(...)
+                        self[key](self, ...)
+                        if createFunctionEvents then
+                            inst:FindFirstChild("On"..key):Fire()
+                        end
+                        -- inst:FindFirstChild(key):Invoke(...)
                     end
                 end
             end))
         else
+            -- print("Rep B2")
             replicatedEvent = inst:WaitForChild("_Replicator")
             self._maid:GiveTask(replicatedEvent.OnClientEvent:Connect(function(changeType, key, ...)
+                -- print("Client", changeType, key, ...)
                 if changeType == "Events" then
                     inst:FindFirstChild(key):Fire(...)
                 elseif changeType == "Properties" then
-                    properties[key] = ...
+                    self[key] = ...
                 elseif changeType == "Function" then
-                    inst:FindFirstChild(key):Invoke(...)
+                    self[key](...)
+                    if createFunctionEvents then
+                        inst:FindFirstChild("On"..key):Fire()
+                    end
+                    -- inst:FindFirstChild(key):Invoke(...)
                 end
             end))
         end
     end
-
+    -- print("FOUND REP EVENT", replicatedEvent, self)
     for key, func in pairs(functions) do
         -- logger:AtInfo():Log("Building function "..key)
         local bindableFunction = inst:FindFirstChild(key) or Instance.new("BindableFunction", inst)
         bindableFunction.Name = key
         bindableFunction.OnInvoke = function(...)
+            if replicatedEvent then
+                if runService:IsClient() then
+                    replicatedEvent:FireServer("Function", key, ...)
+                else
+                    replicatedEvent:FireClient(replicationPlayer, "Function", key, ...)
+                end
+            end
             return func(self, ...)
         end
         bindableFunction.Parent = inst
@@ -350,29 +402,60 @@ function module.set(self: table, inst: Instance,
         -- logger:AtInfo():Log("Building event "..key)
         if typeof(event) == "RBXScriptSignal" or event.ClassName == "Signal" then
             maid:GiveTask(event:Connect(function(...)
+                if replicatedEvent then
+                    if runService:IsClient() then
+                        replicatedEvent:FireServer("Events", key, ...)
+                    else
+                        replicatedEvent:FireClient(replicationPlayer, "Events", key, ...)
+                    end
+                end
                 bindableEvent:Fire(...)
             end))
         elseif event.ClassName == "Observable" then
             maid:GiveTask(event:Subscribe(function(...)
+                if replicatedEvent then
+                    if runService:IsClient() then
+                        replicatedEvent:FireServer("Events", key, ...)
+                    else
+                        replicatedEvent:FireClient(replicationPlayer, "Events", key, ...)
+                    end
+                end
                 bindableEvent:Fire(...)
             end))
         end
         bindableEvent.Parent = inst
     end
 
-    --set up properties
-    local propertyObserver = rx.from(properties)
-    maid:GiveTask(propertyObserver:Subscribe(function()
-        updateProperties(inst, properties, maid)
+
+    --yeah I know, this is dumb, but nothing else is working and I'm tired
+    local cache = {}
+    for k, v in pairs(self) do
+        cache[k] = v
+    end
+    maid:GiveTask(runService.Stepped:Connect(function()
+        for k, v in pairs(self) do
+            -- if self.IsSelected ~= nil then
+            --     print(self[k], " - ", v)
+            -- end
+            if self[k] ~= cache[k] then
+                cache[k] = v
+                -- print("UPDATE")
+                updateProperties(inst, self, maid, events, replicationPlayer)
+            end
+        end 
     end))
-    updateProperties(inst, properties, maid)
+
+    updateProperties(inst, self, maid, events, replicationPlayer)
 
     maid:GiveTask(inst.Destroying:Connect(function()
         maid:Destroy()
     end))
 
-    collectionService:AddTag(inst, "Instancified")
-
+    if runService:IsClient() then
+        collectionService:AddTag(inst, "ClientInstancified")
+    else
+        collectionService:AddTag(inst, "ServerInstancified")
+    end
 end
 
 return module
